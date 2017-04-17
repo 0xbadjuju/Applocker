@@ -10,16 +10,63 @@ Function Invoke-AppLockerWhiteListWindows {
             [string]$Folder,
         [Parameter(Mandatory=$false, HelpMessage="XML Output Policy File Name")]
             [string]$PolicyFileName = "AppLocker_Policy.xml",
-        [Parameter(Mandatory=$true, HelpMessage="Limit Access to Dangerous Files.")]
+        [Parameter(Mandatory=$false, HelpMessage="Default Group to Permit Access to.")]
+            [string]$DefaultGroup = "Everyone",
+        [Parameter(Mandatory=$false, HelpMessage="Limit Access to Dangerous Files.")]
             [switch]$LimitDangerous,
+        [Parameter(Mandatory=$false, HelpMessage="User/Group to Limit to Dangerous Files to.")]
+            [string]$User = "$env:COMPUTERNAME\Administrators",
         [Parameter(Mandatory=$false, HelpMessage="Immediately Apply Policy.")]
             [switch]$ApplyPolicy,
         [Parameter(Mandatory=$false, HelpMessage="Input of Object of Files")]
-            [Object[]]$InputObject
+            [Object[]]$InputObject,
+        [Parameter(Mandatory=$false, HelpMessage="Additional Exe Files to Limit Access to")]
+            [String[]]$AdditionalDangerousExes,
+        [Parameter(Mandatory=$false, HelpMessage="Additional Dll Files to Limit Access to")]
+            [String[]]$AdditionalDangerousDlls
     )
     Begin {
-        [regex]$LimitAccessExes = "^csc`.exe$|^msbuild`.exe$|^cmd`.exe$|^powershell`.exe$|^powershell_ise`.exe$|^cscript`.exe$|^wscript`.exe$|^jscript`.exe$"
-        [regex]$LimitAccessDlls = "^system`.management`.automation`.dll$"
+        
+        $LimitAccessExesArray = 
+        @(
+        "csc.exe", 
+        "cmd.exe", 
+        "powershell.exe", 
+        "powershell_ise.exe", 
+        "cscript.exe", 
+        "wscript.exe", 
+        "jscript.exe",
+        #SubTee Bypasses
+        #He's done some really awesome work
+        #https://github.com/subTee/ApplicationWhitelistBypassTechniques/blob/master/TheList.txt
+        "IEExec.exe",
+        "rundll32.exe",
+        "dfsvc.exe",
+        "presentationhost.exe",
+        "mshta.exe",
+        "msdt.exe",
+        "InstallUtil.exe", 
+        "regsvcs.exe", 
+        "regasm.exe", 
+        "regsvr32.exe"
+        "msbuild.exe"
+        )
+        $LimitAccessExesArray += @($AdditionalDangerous)
+        [string]$LimitAccessExesString = "^"
+        $LimitAccessExesString += $LimitAccessExesArray -join "$|^"
+        $LimitAccessExesString += "$"
+        [regex]$LimitAccessExes = $LimitAccessExesString -replace ".","`."
+
+        $LimitAccessDllsArray = 
+        @(
+        "system.management.automation.dll",
+        #SubTee Bypasses
+        "dfshim.dll"
+        )
+        [string]$LimitAccessDllsString = "^"
+        $LimitAccessDllsString += $LimitAccessDllsArray -join "$|^"
+        $LimitAccessDllsString += "$"
+        [regex]$LimitAccessDlls = $LimitAccessDllsString -replace ".","`."
     } Process {
         if ($InputObject) {
             $Files = $InputObject | Where-Object Name -Like *.$FileExtention | Where-Object { -not $_.PSIsContainer }
@@ -36,7 +83,7 @@ Function Invoke-AppLockerWhiteListWindows {
 
         if ($LimitDangerous) {
             $DangerousFileInformation = $DangerousFiles | Get-AppLockerFileInformation #-ErrorAction SilentlyContinue
-            $DangerousFileInformation | New-AppLockerPolicy -RuleType Publisher, Path -Optimize -User Administrators -Xml | Out-File $PolicyFileName".xml"
+            $DangerousFileInformation | New-AppLockerPolicy -RuleType Publisher, Path -Optimize -User $User -Xml | Out-File $PolicyFileName".xml"
         }
 
         $Publisher = ($FileInformation | Where-Object Publisher -NotLike $null).Publisher.PublisherName
@@ -45,7 +92,7 @@ Function Invoke-AppLockerWhiteListWindows {
         $Path = $FileInformation | Where-Object Publisher -Like $null
         Write-Verbose $($Path | Out-String)
 
-        $FileInformation | New-AppLockerPolicy -RuleType Publisher, Path -Optimize -User Everyone -Xml | Out-File $PolicyFileName"_BlackList.xml"
+        $FileInformation | New-AppLockerPolicy -RuleType Publisher, Path -Optimize -User $DefaultGroup -Xml | Out-File $PolicyFileName"_BlackList.xml"
     } End { 
         if($ApplyPolicy) {
             Set-AppLockerPolicy -XmlPolicy $PolicyFileName".xml" -Merge
@@ -74,7 +121,9 @@ Function Invoke-AppLockerDefaultWhiteList {
         [Parameter(Mandatory=$false, HelpMessage=".")]
             [switch]$ProgramFilesX86,
         [Parameter(Mandatory=$false, HelpMessage=".")]
-            [switch]$AppData
+            [switch]$AppData,
+        [Parameter(Mandatory=$false, HelpMessage=".")]
+            [string[]]$CustomFolders
     )
     Begin {
         
@@ -141,6 +190,24 @@ Function Invoke-AppLockerDefaultWhiteList {
             if ($Sys) {
                 Write-Verbose "Adding sys Files"
                 Invoke-AppLockerWhiteListWindows -FileExtention sys -InputObject $Files -PolicyFileName "C:\AppData_Sys_AppLocker_Policy" -LimitDangerous -ApplyPolicy -Verbose
+            }
+        }
+        if ($CustomFolders) {
+            $CustomFolders | ForEach-Object {
+                Write-Verbose "Entering $CustomFolder"
+                $Files = Get-ChildItem -Path $_ -Recurse -Include *.exe,*.dll,*.sys
+                if ($Exe) {
+                    Write-Verbose "Adding exe Files"
+                    Invoke-AppLockerWhiteListWindows -FileExtention exe -InputObject $Files -PolicyFileName "C:\AppData_Exe_AppLocker_Policy" -LimitDangerous -ApplyPolicy -Verbose
+                }
+                if ($Dll) {
+                    Write-Verbose "Adding dll Files"
+                    Invoke-AppLockerWhiteListWindows -FileExtention dll -InputObject $Files -PolicyFileName "C:\AppData_Exe_AppLocker_Policy" -LimitDangerous -ApplyPolicy -Verbose
+                }
+                if ($Sys) {
+                    Write-Verbose "Adding sys Files"
+                    Invoke-AppLockerWhiteListWindows -FileExtention sys -InputObject $Files -PolicyFileName "C:\AppData_Sys_AppLocker_Policy" -LimitDangerous -ApplyPolicy -Verbose
+                }
             }
         }
     } End {
