@@ -1,108 +1,149 @@
-﻿$WindowsExePolicy = "C:\Windows_Folder_Exe_AppLocker.xml"
-$WindowsDllPolicy = "C:\Windows_Folder_Dll_AppLocker.xml"
-$ProgramFileExePolicy = "C:\Program_Files_Exe_AppLocker.xml"
-$ProgramFileDllPolicy = "C:\Program_Files_Dll_AppLocker.xml"
-$ProgramFileX86ExePolicy = "C:\Program_Files_x86_Exe_AppLocker.xml"
-$ProgramFileX86DllPolicy = "C:\Program_Files_x86_Dll_AppLocker.xml"
-$BlacklistExePolicy = "C:\Blacklist_Exe_AppLocker.xml"
+﻿################################################################################
+################################################################################
+Function Invoke-AppLockerWhiteListWindows {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Mandatory=$true, HelpMessage="Name of Class to Test Against.")]
+        [ValidateSet(“exe”,”dll”,”sys”)]
+            [string]$FileExtention,
+        [Parameter(Mandatory=$false, HelpMessage="Folder to Scan")]
+            [string]$Folder,
+        [Parameter(Mandatory=$false, HelpMessage="XML Output Policy File Name")]
+            [string]$PolicyFileName = "AppLocker_Policy.xml",
+        [Parameter(Mandatory=$true, HelpMessage="Limit Access to Dangerous Files.")]
+            [switch]$LimitDangerous,
+        [Parameter(Mandatory=$false, HelpMessage="Immediately Apply Policy.")]
+            [switch]$ApplyPolicy,
+        [Parameter(Mandatory=$false, HelpMessage="Input of Object of Files")]
+            [Object[]]$InputObject
+    )
+    Begin {
+        [regex]$LimitAccessExes = "^csc`.exe$|^msbuild`.exe$|^cmd`.exe$|^powershell`.exe$|^powershell_ise`.exe$|^cscript`.exe$|^jscript`.exe$"
+        [regex]$LimitAccessDlls = "^system`.management`.automation`.dll$"
+    } Process {
+        if ($InputObject) {
+            $Files = $InputObject | Where-Object Name -Like *.$FileExtention | Where-Object { -not $_.PSIsContainer }
+        } else {
+            $Files = Get-ChildItem $Folder"\*."$FileExtention -Recurse  | Where-Object { -not $_.PSIsContainer }
+        }
 
-[regex]$LimitAccessExes = "^csc`.exe$|^msbuild`.exe$|^cmd`.exe$|^powershell`.exe$|^powershell_ise`.exe$|^cscript`.exe$|^jscript`.exe$"
+        if ($LimitDangerous) {
+            $DangerousFiles | Where-Object { $_.Name -match $LimitAccessExes }
+            $Files = $Files |  Where-Object { $_.Name -notmatch $LimitAccessExes }
+        }
+
+        $FileInformation = $Files | Get-AppLockerFileInformation # -ErrorAction SilentlyContinue
+
+        if ($LimitDangerous) {
+            $DangerousFileInformation = $DangerousFiles | Get-AppLockerFileInformation #-ErrorAction SilentlyContinue
+            $DangerousFileInformation | New-AppLockerPolicy -RuleType Publisher, Path -Optimize -User Administrators -Xml | Out-File $PolicyFileName".xml"
+        }
+
+        $Publisher = ($FileInformation | Where-Object Publisher -NotLike $null).Publisher.PublisherName
+        Write-Verbose $($Publisher | Sort-Object | Get-Unique | Out-String)
+
+        $Path = $FileInformation | Where-Object Publisher -Like $null
+        Write-Verbose $($Path | Out-String)
+
+        $FileInformation | New-AppLockerPolicy -RuleType Publisher, Path -Optimize -User Everyone -Xml | Out-File $PolicyFileName"_BlackList.xml"
+    } End { 
+        if($ApplyPolicy) {
+            Set-AppLockerPolicy -XmlPolicy $PolicyFileName".xml" -Merge
+        }
+        if ($ApplyPolicy -and $LimitDangerous) {
+            Set-AppLockerPolicy -XmlPolicy $PolicyFileName"_BlackList.xml" -Merge
+        }
+    }
+}
 
 ################################################################################
 ################################################################################
-$ExeFiles = Get-ChildItem C:\Windows\*.exe -Recurse
-$ExeFileInformation = $ExeFiles| Where {$_.Name -notmatch $LimitAccessExes} | Get-AppLockerFileInformation -ErrorAction SilentlyContinue
-
-$ExePublisher = $ExeFileInformation | ? Publisher -NotLike $null
-$ExePublisher.Publisher.PublisherName | Sort-Object | Get-Unique
-
-$ExePath = $ExeFileInformation | ? Publisher -Like $null
-
-$ExeFileInformation | New-AppLockerPolicy -RuleType Publisher, Path -Optimize -User Everyone -Xml | Out-File $WindowsExePolicy
-
-################################################################################
-################################################################################
-$DllFiles = Get-ChildItem C:\Windows\*.dll -Recurse
-$DllFileInformation = $DllFiles | Where {$_.Name -notmatch $LimitAccessExes} | Get-AppLockerFileInformation -ErrorAction SilentlyContinue
-
-$DllPublisher = $DllFileInformation | ? Publisher -NotLike $null
-$DllPublisher.Publisher.PublisherName | Sort-Object | Get-Unique
-
-$DllPath = $DllFileInformation | ? Publisher -Like $null
-
-$DllFileInformation | New-AppLockerPolicy -RuleType Publisher, Path -Optimize -User Everyone -Xml | Out-File $WindowsDllPolicy
-
-#Whitelist bypass files
-#system.management.automation.dll
-
-################################################################################
-################################################################################
-$ExeProgramFiles = Get-ChildItem $env:ProgramFiles\*.exe -Recurse
-$ExeProgramFilesInformation = $ExeProgramFiles | Where {$_.Name -notmatch $LimitAccessExes} | Get-AppLockerFileInformation -ErrorAction SilentlyContinue
-
-$ExeProgramFilesPublisher = $ExeProgramFilesInformation | ? Publisher -NotLike $null
-$ExeProgramFilesPublisher.Publisher.PublisherName | Sort-Object | Get-Unique
-
-$ExeProgramFilesPath = $ExeProgramFilesInformation | ? Publisher -Like $null
-
-$ExeProgramFilesInformation | New-AppLockerPolicy -RuleType Publisher, Path -Optimize -User Everyone -Xml | Out-File $ProgramFileExePolicy
-
-#Some folders have the file extention of .exe
-
-################################################################################
-################################################################################
-$DllProgramFiles = Get-ChildItem $env:ProgramFiles\*.dll -Recurse
-$DllProgramFilesInformation = $DllProgramFiles | Where {$_.Name -notmatch $LimitAccessExes} | Get-AppLockerFileInformation -ErrorAction SilentlyContinue
-
-$DllProgramFilesPublisher = $DllProgramFilesInformation | ? Publisher -NotLike $null
-$DllProgramFilesPublisher.Publisher.PublisherName | Sort-Object | Get-Unique
-
-$DllProgramFilesPath = $DllProgramFilesInformation | ? Publisher -Like $null
-
-$DllProgramFilesInformation | New-AppLockerPolicy -RuleType Publisher, Path -Optimize -User Everyone -Xml | Out-File $ProgramFileDllPolicy
-
-################################################################################
-################################################################################
-$ExeProgramFiles86 = Get-ChildItem ${env:ProgramFiles(x86)}\*.exe -Recurse
-$ExeProgramFiles86Information = $ExeProgramFiles86 | Where {$_.Name -notmatch $LimitAccessExes} | Get-AppLockerFileInformation -ErrorAction SilentlyContinue
-
-$ExeProgramFiles86Publisher = $ExeProgramFiles86Information | ? Publisher -NotLike $null
-$ExeProgramFiles86Publisher.Publisher.PublisherName | Sort-Object | Get-Unique
-
-$ExeProgramFiles86Path = $ExeProgramFiles86Information | ? Publisher -Like $null
-
-$ExeProgramFiles86Information | New-AppLockerPolicy -RuleType Publisher, Path -Optimize -User Everyone -Xml | Out-File $ProgramFileX86ExePolicy
-
-################################################################################
-################################################################################
-$DllProgramFiles86 = Get-ChildItem ${env:ProgramFiles(x86)}\*.dll -Recurse
-$DllProgramFiles86Information = $DllProgramFiles86 | Where {$_.Name -notmatch $LimitAccessExes} | Get-AppLockerFileInformation -ErrorAction SilentlyContinue
-
-$DllProgramFiles86Publisher = $DllProgramFiles86Information | ? Publisher -NotLike $null
-$DllProgramFiles86Publisher.Publisher.PublisherName | Sort-Object | Get-Unique
-
-$DllProgramFiles86Path = $DllProgramFiles86Information | ? Publisher -Like $null
-
-$DllProgramFiles86Information | New-AppLockerPolicy -RuleType Publisher, Path -Optimize -User Everyone -Xml | Out-File $ProgramFileX86DllPolicy
-
-################################################################################
-################################################################################
-$BlacklistExeFiles = @($ExeFiles)
-$BlacklistExeFiles += @($ExeProgramFiles)
-$BlacklistExeFiles += @($ExeProgramFiles86)
-
-$BlacklistExeFileInformation = $BlacklistExeFiles | Where {$_.Name -match $LimitAccessExes} | Get-AppLockerFileInformation -ErrorAction SilentlyContinue
-
-$BlacklistExeFileInformation | New-AppLockerPolicy -RuleType Publisher, Path -Optimize -User Administrators -Xml | Out-File $BlacklistExePolicy
-
-################################################################################
-################################################################################
-Set-AppLockerPolicy -XmlPolicy $WindowsExePolicy -Merge
-Set-AppLockerPolicy -XmlPolicy $WindowsDllPolicy -Merge
-Set-AppLockerPolicy -XmlPolicy $ProgramFileExePolicy -Merge
-Set-AppLockerPolicy -XmlPolicy $ProgramFileDllPolicy -Merge
-Set-AppLockerPolicy -XmlPolicy $ProgramFileX86ExePolicy -Merge
-Set-AppLockerPolicy -XmlPolicy $ProgramFileX86DllPolicy -Merge
-Set-AppLockerPolicy -XmlPolicy $BlacklistExePolicy -Merge
-
-Start-Service -Name AppIDSvc
+Function Invoke-AppLockerDefaultWhiteList {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Mandatory=$false, HelpMessage=".")]
+            [switch]$Exe,
+        [Parameter(Mandatory=$false, HelpMessage=".")]
+            [switch]$Dll,
+        [Parameter(Mandatory=$false, HelpMessage=".")]
+            [switch]$Sys,
+        [Parameter(Mandatory=$false, HelpMessage=".")]
+            [switch]$Windows,
+        [Parameter(Mandatory=$false, HelpMessage=".")]
+            [switch]$ProgramFiles,
+        [Parameter(Mandatory=$false, HelpMessage=".")]
+            [switch]$ProgramFilesX86,
+        [Parameter(Mandatory=$false, HelpMessage=".")]
+            [switch]$AppData
+    )
+    Begin {
+        
+    } Process {
+        if ($Windows) {
+            Write-Verbose "Entering $env:windir" 
+            $Files = Get-ChildItem -Path $env:windir -Recurse -Include *.exe,*.dll,*.sys
+            if ($Exe) {
+                Write-Verbose "Adding exe Files"
+                Invoke-AppLockerWhiteListWindows -FileExtention exe -InputObject $Files -PolicyFileName "C:\Windows_Exe_AppLocker_Policy" -LimitDangerous -ApplyPolicy -Verbose
+            }
+            if ($Dll) {
+                Write-Verbose "Adding dll Files"
+                Invoke-AppLockerWhiteListWindows -FileExtention dll -InputObject $Files -PolicyFileName "C:\Windows_Dll_AppLocker_Policy" -LimitDangerous -ApplyPolicy -Verbose
+            }
+            if ($Sys) {
+                Write-Verbose "Adding sys Files"
+                Invoke-AppLockerWhiteListWindows -FileExtention sys -InputObject $Files -PolicyFileName "C:\Windows_Sys_AppLocker_Policy" -LimitDangerous -ApplyPolicy -Verbose
+            }
+        }
+        if ($ProgramFiles) {
+            Write-Verbose "Entering $env:ProgramFiles" 
+            $Files = Get-ChildItem -Path $env:ProgramFiles -Recurse -Include *.exe,*.dll,*.sys
+            if ($Exe) {
+                Write-Verbose "Adding exe Files"
+                Invoke-AppLockerWhiteListWindows -FileExtention exe -InputObject $Files -PolicyFileName "C:\ProgramFiles_Exe_AppLocker_Policy" -LimitDangerous -ApplyPolicy -Verbose
+            }
+            if ($Dll) {
+                Write-Verbose "Adding dll Files"
+                Invoke-AppLockerWhiteListWindows -FileExtention dll -InputObject $Files -PolicyFileName "C:\ProgramFiles_Dll_AppLocker_Policy" -LimitDangerous -ApplyPolicy -Verbose
+            }
+            if ($Sys) {
+                Write-Verbose "Adding sys Files"
+                Invoke-AppLockerWhiteListWindows -FileExtention sys -InputObject $Files -PolicyFileName "C:\ProgramFiles_Sys_AppLocker_Policy" -LimitDangerous -ApplyPolicy -Verbose
+            }
+        }
+        if ($ProgramFilesX86) {
+            Write-Verbose "Entering ${env:ProgramFiles(x86)}" 
+            $Files = Get-ChildItem -Path ${env:ProgramFiles(x86)} -Recurse -Include *.exe,*.dll,*.sys
+            if ($Exe) {
+                Write-Verbose "Adding exe Files"
+                Invoke-AppLockerWhiteListWindows -FileExtention exe -InputObject $Files -PolicyFileName "C:\ProgramFilesX86_Exe_AppLocker_Policy" -LimitDangerous -ApplyPolicy -Verbose
+            }
+            if ($Dll) {
+                Write-Verbose "Adding dll Files"
+                Invoke-AppLockerWhiteListWindows -FileExtention dll -InputObject $Files -PolicyFileName "C:\ProgramFilesX86_Dll_AppLocker_Policy" -LimitDangerous -ApplyPolicy -Verbose
+            }
+            if ($Sys) {
+                Write-Verbose "Adding sys Files"
+                Invoke-AppLockerWhiteListWindows -FileExtention sys -InputObject $Files -PolicyFileName "C:\ProgramFilesX86_Sys_AppLocker_Policy" -LimitDangerous -ApplyPolicy -Verbose
+            }
+        }
+        if ($AppData) {
+            Write-Verbose "Entering $env:USERPROFILE\AppData"
+            $Files = Get-ChildItem -Path $env:USERPROFILE\AppData -Recurse -Include *.exe,*.dll,*.sys
+            if ($Exe) {
+                Write-Verbose "Adding exe Files"
+                Invoke-AppLockerWhiteListWindows -FileExtention exe -InputObject $Files -PolicyFileName "C:\AppData_Exe_AppLocker_Policy" -LimitDangerous -ApplyPolicy -Verbose
+            }
+            if ($Dll) {
+                Write-Verbose "Adding dll Files"
+                Invoke-AppLockerWhiteListWindows -FileExtention dll -InputObject $Files -PolicyFileName "C:\AppData_Exe_AppLocker_Policy" -LimitDangerous -ApplyPolicy -Verbose
+            }
+            if ($Sys) {
+                Write-Verbose "Adding sys Files"
+                Invoke-AppLockerWhiteListWindows -FileExtention sys -InputObject $Files -PolicyFileName "C:\AppData_Sys_AppLocker_Policy" -LimitDangerous -ApplyPolicy -Verbose
+            }
+        }
+    } End {
+        
+    }
+}
