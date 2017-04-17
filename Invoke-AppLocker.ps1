@@ -18,7 +18,7 @@ Function Invoke-AppLockerWhiteListWindows {
             [Object[]]$InputObject
     )
     Begin {
-        [regex]$LimitAccessExes = "^csc`.exe$|^msbuild`.exe$|^cmd`.exe$|^powershell`.exe$|^powershell_ise`.exe$|^cscript`.exe$|^jscript`.exe$"
+        [regex]$LimitAccessExes = "^csc`.exe$|^msbuild`.exe$|^cmd`.exe$|^powershell`.exe$|^powershell_ise`.exe$|^cscript`.exe$|^wscript`.exe$|^jscript`.exe$"
         [regex]$LimitAccessDlls = "^system`.management`.automation`.dll$"
     } Process {
         if ($InputObject) {
