@@ -11,11 +11,11 @@ Function Invoke-AppLockerWhiteList {
         [Parameter(Mandatory=$false, HelpMessage="XML Output Policy File Name")]
             [string]$PolicyFileName = "AppLocker_Policy.xml",
         [Parameter(Mandatory=$false, HelpMessage="Default Group to Permit Access to.")]
-            [string]$DefaultGroup = "Everyone",
+            [string]$DefaultAllowGroup = "Everyone",
         [Parameter(Mandatory=$false, HelpMessage="Limit Access to Dangerous Files.")]
             [switch]$LimitDangerous,
         [Parameter(Mandatory=$false, HelpMessage="User/Group to Limit to Dangerous Files to.")]
-            [string]$User = "$env:COMPUTERNAME\Administrators",
+            [string]$LimitedUser = "$env:COMPUTERNAME\Administrators",
         [Parameter(Mandatory=$false, HelpMessage="Immediately Apply Policy.")]
             [switch]$ApplyPolicy,
         [Parameter(Mandatory=$false, HelpMessage="Input of Object of Files")]
@@ -26,7 +26,7 @@ Function Invoke-AppLockerWhiteList {
             [String[]]$AdditionalDangerousDlls
     )
     Begin {
-        
+        #Build blacklist Exes
         $LimitAccessExesArray = @(
         "csc.exe", 
         "cmd.exe", 
@@ -50,45 +50,45 @@ Function Invoke-AppLockerWhiteList {
         "regsvr32.exe"
         "msbuild.exe"
         )
-        $LimitAccessExesArray += @($AdditionalDangerous)
+        $LimitAccessExesArray += @($AdditionalDangerousExes)
         [string]$LimitAccessExesString = "^"
         $LimitAccessExesString += $LimitAccessExesArray -join "$|^"
         $LimitAccessExesString = $LimitAccessExesString -replace "\$\|\^$",""
         $LimitAccessExesString += "$"
         [regex]$LimitAccessExes = $LimitAccessExesString -replace "\.","\."
-        Write-Verbose $LimitAccessExes
-
+        #Build blacklist Dlls
         $LimitAccessDllsArray =  @(
         "system.management.automation.dll",
         #SubTee Bypasses
         "dfshim.dll"
         )
+        $LimitAccessExesArray += @($AdditionalDangerousDlls)
         [string]$LimitAccessDllsString = "^"
         $LimitAccessDllsString += $LimitAccessDllsArray -join "$|^"
+        $LimitAccessDllsString += $LimitAccessDllsArray -replace "\$\|\^$",""
         $LimitAccessDllsString += "$"
-        [regex]$LimitAccessDlls = $LimitAccessDllsString -replace ".","`."
+        [regex]$LimitAccessDlls = $LimitAccessDllsString -replace "\.","\."
     } Process {
+        #Get Input Files
         if ($InputObject) {
             $Files = $InputObject | Where-Object Name -Like *.$FileExtention | Where-Object { -not $_.PSIsContainer }
         } else {
             $Files = Get-ChildItem $Folder"\*."$FileExtention -Recurse -Force -ErrorAction SilentlyContinue | Where-Object { -not $_.PSIsContainer }
         }
+        #Filter out Files
         if ($LimitDangerous) {
             $DangerousFiles = $Files | Where-Object { $_.Name -match $LimitAccessExes }
             $Files = $Files |  Where-Object { $_.Name -notmatch $LimitAccessExes }           
             $DangerousFileInformation = $DangerousFiles | Get-AppLockerFileInformation -ErrorAction SilentlyContinue
             $DangerouFilePublisher = ($DangerousFileInformation | Where-Object Publisher -NotLike $null).Publisher.PublisherName
-            Write-Warning $($DangerousFiles | Out-String)
             Write-Warning $($DangerouFilePublisher | Sort-Object | Get-Unique  | Out-String)
-            $DangerousFileInformation | New-AppLockerPolicy -RuleType Publisher, hash, Path -Optimize -User BUILTIN\Administrators -Xml | Out-File $PolicyFileName"_BlackList.xml"
-            Set-AppLockerPolicy -XmlPolicy $PolicyFileName"_BlackList.xml" -Merge
+            $DangerousFileInformation | New-AppLockerPolicy -RuleType Publisher, hash, Path -Optimize -User $LimitedUser -Xml | Out-File $PolicyFileName"_BlackList.xml"
         }
+        #Get File Information
         $FileInformation = $Files | Get-AppLockerFileInformation -ErrorAction SilentlyContinue
         $Publisher = ($FileInformation | Where-Object Publisher -NotLike $null).Publisher.PublisherName
         Write-Verbose $($Publisher | Sort-Object | Get-Unique | Out-String)
-        $Path = $FileInformation | Where-Object Publisher -Like $null
-        #Write-Verbose $($Path | Out-String)
-        $FileInformation | New-AppLockerPolicy -RuleType Publisher, Path -Optimize -User $DefaultGroup -Xml | Out-File $PolicyFileName"_BlackList.xml"
+        $FileInformation | New-AppLockerPolicy -RuleType Publisher, Path -Optimize -User $DefaultAllowGroup -Xml | Out-File $PolicyFileName".xml"
     } End { 
         if($ApplyPolicy) {
             Set-AppLockerPolicy -XmlPolicy $PolicyFileName".xml" -Merge
